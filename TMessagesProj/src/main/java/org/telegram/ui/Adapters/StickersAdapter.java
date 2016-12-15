@@ -22,6 +22,8 @@ import org.telegram.ui.Cells.StickerCell;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 
 public class StickersAdapter extends RecyclerView.Adapter implements NotificationCenter.NotificationCenterDelegate {
@@ -47,7 +49,8 @@ public class StickersAdapter extends RecyclerView.Adapter implements Notificatio
     public StickersAdapter(Context context, StickersAdapterDelegate delegate) {
         mContext = context;
         this.delegate = delegate;
-        StickersQuery.checkStickers();
+        StickersQuery.checkStickers(StickersQuery.TYPE_IMAGE);
+        StickersQuery.checkStickers(StickersQuery.TYPE_MASK);
         NotificationCenter.getInstance().addObserver(this, NotificationCenter.FileDidLoaded);
         NotificationCenter.getInstance().addObserver(this, NotificationCenter.FileDidFailedLoad);
     }
@@ -92,12 +95,14 @@ public class StickersAdapter extends RecyclerView.Adapter implements Notificatio
         if (search) {
             int length = emoji.length();
             for (int a = 0; a < length; a++) {
-                if (a < length - 1 && emoji.charAt(a) == 0xD83C && emoji.charAt(a + 1) >= 0xDFFB && emoji.charAt(a + 1) <= 0xDFFF) {
+                if (a < length - 1 && (emoji.charAt(a) == 0xD83C && emoji.charAt(a + 1) >= 0xDFFB && emoji.charAt(a + 1) <= 0xDFFF || emoji.charAt(a) == 0x200D && (emoji.charAt(a + 1) == 0x2640 || emoji.charAt(a + 1) == 0x2642))) {
                     emoji = TextUtils.concat(emoji.subSequence(0, a), emoji.subSequence(a + 2, emoji.length()));
-                    break;
+                    length -= 2;
+                    a--;
                 } else if (emoji.charAt(a) == 0xfe0f) {
                     emoji = TextUtils.concat(emoji.subSequence(0, a), emoji.subSequence(a + 1, emoji.length()));
                     length--;
+                    a--;
                 }
             }
             lastSticker = emoji.toString();
@@ -110,7 +115,34 @@ public class StickersAdapter extends RecyclerView.Adapter implements Notificatio
                         visible = false;
                     }
                 } else {
-                    stickers = newStickers;
+                    stickers = newStickers != null && !newStickers.isEmpty() ? new ArrayList<>(newStickers) : null;
+                    if (stickers != null) {
+                        final ArrayList<TLRPC.Document> recentStickers = StickersQuery.getRecentStickersNoCopy(StickersQuery.TYPE_IMAGE);
+                        if (!recentStickers.isEmpty()) {
+                            Collections.sort(stickers, new Comparator<TLRPC.Document>() {
+                                private int getIndex(long id) {
+                                    for (int a = 0; a < recentStickers.size(); a++) {
+                                        if (recentStickers.get(a).id == id) {
+                                            return a;
+                                        }
+                                    }
+                                    return -1;
+                                }
+
+                                @Override
+                                public int compare(TLRPC.Document lhs, TLRPC.Document rhs) {
+                                    int idx1 = getIndex(lhs.id);
+                                    int idx2 = getIndex(rhs.id);
+                                    if (idx1 > idx2) {
+                                        return -1;
+                                    } else if (idx1 < idx2) {
+                                        return 1;
+                                    }
+                                    return 0;
+                                }
+                            });
+                        }
+                    }
                     checkStickerFilesExistAndDownload();
                     delegate.needChangePanelVisibility(stickers != null && !stickers.isEmpty() && stickersToLoad.isEmpty());
                     notifyDataSetChanged();

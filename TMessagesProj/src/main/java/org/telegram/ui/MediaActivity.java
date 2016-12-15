@@ -8,6 +8,9 @@
 
 package org.telegram.ui;
 
+import android.animation.Animator;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -18,6 +21,7 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.support.v4.content.FileProvider;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -38,6 +42,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.BuildConfig;
 import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaController;
@@ -64,8 +69,6 @@ import org.telegram.ui.ActionBar.BottomSheet;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Adapters.BaseFragmentAdapter;
 import org.telegram.ui.Adapters.BaseSectionsAdapter;
-import org.telegram.messenger.AnimationCompat.AnimatorSetProxy;
-import org.telegram.messenger.AnimationCompat.ObjectAnimatorProxy;
 import org.telegram.ui.Cells.GreySectionCell;
 import org.telegram.ui.Cells.LoadingCell;
 import org.telegram.ui.Cells.SharedDocumentCell;
@@ -256,14 +259,6 @@ public class MediaActivity extends BaseFragment implements NotificationCenter.No
                         actionBar.hideActionMode();
                         listView.invalidateViews();
                     } else {
-                        if (Build.VERSION.SDK_INT < 11 && listView != null) {
-                            listView.setAdapter(null);
-                            listView = null;
-                            photoVideoAdapter = null;
-                            documentsAdapter = null;
-                            audioAdapter = null;
-                            linksAdapter = null;
-                        }
                         finishFragment();
                     }
                 } else if (id == shared_media_item) {
@@ -813,6 +808,11 @@ public class MediaActivity extends BaseFragment implements NotificationCenter.No
     }
 
     @Override
+    public boolean scaleToFill() {
+        return false;
+    }
+
+    @Override
     public PhotoViewer.PlaceProviderObject getPlaceForPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index) {
         if (messageObject == null || listView == null || selectedMode != 0) {
             return null;
@@ -834,7 +834,7 @@ public class MediaActivity extends BaseFragment implements NotificationCenter.No
                         imageView.getLocationInWindow(coords);
                         PhotoViewer.PlaceProviderObject object = new PhotoViewer.PlaceProviderObject();
                         object.viewX = coords[0];
-                        object.viewY = coords[1] - AndroidUtilities.statusBarHeight;
+                        object.viewY = coords[1] - (Build.VERSION.SDK_INT >= 21 ? 0 : AndroidUtilities.statusBarHeight);
                         object.parentView = listView;
                         object.imageReceiver = imageView.getImageReceiver();
                         object.thumb = object.imageReceiver.getBitmap();
@@ -851,6 +851,11 @@ public class MediaActivity extends BaseFragment implements NotificationCenter.No
     @Override
     public Bitmap getThumbForPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index) {
         return null;
+    }
+
+    @Override
+    public boolean allowCaption() {
+        return true;
     }
 
     @Override
@@ -879,6 +884,10 @@ public class MediaActivity extends BaseFragment implements NotificationCenter.No
         if (info != null && info.migrated_from_chat_id != 0) {
             mergeDialogId = -info.migrated_from_chat_id;
         }
+    }
+
+    public void setMergeDialogId(long did) {
+        mergeDialogId = did;
     }
 
     private void switchToCurrentSelectedMode() {
@@ -997,18 +1006,16 @@ public class MediaActivity extends BaseFragment implements NotificationCenter.No
         }
         actionBar.createActionMode().getItem(delete).setVisibility(cantDeleteMessagesCount == 0 ? View.VISIBLE : View.GONE);
         selectedMessagesCountTextView.setNumber(1, false);
-        if (Build.VERSION.SDK_INT >= 11) {
-            AnimatorSetProxy animatorSet = new AnimatorSetProxy();
-            ArrayList<Object> animators = new ArrayList<>();
-            for (int i = 0; i < actionModeViews.size(); i++) {
-                View view2 = actionModeViews.get(i);
-                AndroidUtilities.clearDrawableAnimation(view2);
-                animators.add(ObjectAnimatorProxy.ofFloat(view2, "scaleY", 0.1f, 1.0f));
-            }
-            animatorSet.playTogether(animators);
-            animatorSet.setDuration(250);
-            animatorSet.start();
+        AnimatorSet animatorSet = new AnimatorSet();
+        ArrayList<Animator> animators = new ArrayList<>();
+        for (int i = 0; i < actionModeViews.size(); i++) {
+            View view2 = actionModeViews.get(i);
+            AndroidUtilities.clearDrawableAnimation(view2);
+            animators.add(ObjectAnimator.ofFloat(view2, "scaleY", 0.1f, 1.0f));
         }
+        animatorSet.playTogether(animators);
+        animatorSet.setDuration(250);
+        animatorSet.start();
         scrolling = false;
         if (view instanceof SharedDocumentCell) {
             ((SharedDocumentCell) view).setChecked(true, true);
@@ -1077,6 +1084,7 @@ public class MediaActivity extends BaseFragment implements NotificationCenter.No
                             String realMimeType = null;
                             try {
                                 Intent intent = new Intent(Intent.ACTION_VIEW);
+                                intent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                                 MimeTypeMap myMime = MimeTypeMap.getSingleton();
                                 int idx = fileName.lastIndexOf('.');
                                 if (idx != -1) {
@@ -1088,19 +1096,21 @@ public class MediaActivity extends BaseFragment implements NotificationCenter.No
                                             realMimeType = null;
                                         }
                                     }
-                                    if (realMimeType != null) {
-                                        intent.setDataAndType(Uri.fromFile(f), realMimeType);
-                                    } else {
-                                        intent.setDataAndType(Uri.fromFile(f), "text/plain");
-                                    }
+                                }
+                                if (Build.VERSION.SDK_INT >= 24) {
+                                    intent.setDataAndType(FileProvider.getUriForFile(getParentActivity(), BuildConfig.APPLICATION_ID + ".provider", f), realMimeType != null ? realMimeType : "text/plain");
                                 } else {
-                                    intent.setDataAndType(Uri.fromFile(f), "text/plain");
+                                    intent.setDataAndType(Uri.fromFile(f), realMimeType != null ? realMimeType : "text/plain");
                                 }
                                 if (realMimeType != null) {
                                     try {
                                         getParentActivity().startActivityForResult(intent, 500);
                                     } catch (Exception e) {
-                                        intent.setDataAndType(Uri.fromFile(f), "text/plain");
+                                        if (Build.VERSION.SDK_INT >= 24) {
+                                            intent.setDataAndType(FileProvider.getUriForFile(getParentActivity(), BuildConfig.APPLICATION_ID + ".provider", f), "text/plain");
+                                        } else {
+                                            intent.setDataAndType(Uri.fromFile(f), "text/plain");
+                                        }
                                         getParentActivity().startActivityForResult(intent, 500);
                                     }
                                 } else {
@@ -1659,7 +1669,7 @@ public class MediaActivity extends BaseFragment implements NotificationCenter.No
                                 String search[] = new String[1 + (search2 != null ? 1 : 0)];
                                 search[0] = search1;
                                 if (search2 != null) {
-                                    search[currentType] = search2;
+                                    search[1] = search2;
                                 }
 
                                 ArrayList<MessageObject> resultArray = new ArrayList<>();
